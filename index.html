@@ -4,65 +4,70 @@
   <title>JioPhone CCTV</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: sans-serif; text-align: center; }
-    video { width: 100%; max-height: 240px; background: #000; }
-    #status { margin-top: 10px; font-size: 14px; }
+    body { font-family:sans-serif; text-align:center; background:#111; color:#eee; }
+    video { width:95%; max-height:200px; margin:5px; background:#000; }
+    button { padding:8px; margin:10px; width:90%; font-size:14px; }
+    #log { font-size:12px; white-space:pre-wrap; text-align:left; margin:5px; }
   </style>
 </head>
 <body>
-  <h3>📹 JioPhone CCTV</h3>
-  <video id="local" autoplay muted></video>
-  <div id="status">Starting...</div>
+  <h3>📹 Jio CCTV Sender</h3>
+  <video id="local" autoplay muted playsinline></video>
+  <button onclick="start()">Start CCTV</button>
+  <div id="log">Idle...</div>
 
   <script>
+    const log = msg => document.getElementById("log").innerText = msg;
+
+    let pc;
     const BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
     const CHAT_ID = "-1001590820560";
-    const OFFER_URL = "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/offer.json"; 
-    // 👆 replace with your GitHub raw file URL
 
-    let pc = new RTCPeerConnection();
-    let local = document.getElementById("local");
-    let status = document.getElementById("status");
-
-    pc.oniceconnectionstatechange = () => {
-      status.innerText = "ICE state: " + pc.iceConnectionState;
-    };
-
-    // Capture camera + mic
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        local.srcObject = stream;
-        stream.getTracks().forEach(t => pc.addTrack(t, stream));
-        status.innerText = "✅ Camera/Mic ready, waiting for offer...";
-        fetchOffer();
-      })
-      .catch(err => status.innerText = "❌ Media error: " + err.message);
-
-    // Fetch offer from GitHub
-    async function fetchOffer() {
+    async function start() {
+      log("Starting...");
       try {
-        const res = await fetch(OFFER_URL + "?t=" + Date.now()); // avoid cache
-        if (!res.ok) throw new Error("Offer not found");
-        const offer = await res.json();
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        status.innerText = "📡 Offer received, creating answer...";
-        createAnswer();
-      } catch (err) {
-        status.innerText = "Retrying fetch...";
-        setTimeout(fetchOffer, 4000);
+        // setup peer
+        pc = new RTCPeerConnection();
+        pc.onconnectionstatechange = () => log("Conn: " + pc.connectionState);
+
+        // camera+mic
+        let stream = await navigator.mediaDevices.getUserMedia({
+          video: { width:160, height:120, frameRate:10 },
+          audio: true
+        });
+        document.getElementById("local").srcObject = stream;
+        stream.getTracks().forEach(t => pc.addTrack(t, stream));
+
+        // fetch offer.json from repo
+        log("Fetching offer.json...");
+        let res = await fetch("offer.json?_=" + Date.now()); // cache-bust
+        let offer = await res.json();
+        await pc.setRemoteDescription(offer);
+
+        // create answer
+        log("Creating answer...");
+        let answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        // wait for ICE candidates
+        pc.onicecandidate = async e => {
+          if (!e.candidate && pc.localDescription) {
+            log("Sending answer to Telegram...");
+            let ansText = JSON.stringify(pc.localDescription);
+            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                chat_id: CHAT_ID,
+                text: ansText
+              })
+            });
+            log("✅ Answer sent to Telegram!");
+          }
+        };
+      } catch(e) {
+        log("❌ Error: " + e.message);
       }
-    }
-
-    async function createAnswer() {
-      let answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      sendToTelegram(JSON.stringify(answer));
-      status.innerText = "✅ Answer created and sent to Telegram";
-    }
-
-    function sendToTelegram(text) {
-      const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage?chat_id=${CHAT_ID}&text=${encodeURIComponent(text)}`;
-      fetch(url).catch(err => status.innerText = "❌ Telegram error: " + err);
     }
   </script>
 </body>
