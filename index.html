@@ -1,53 +1,109 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Jio Camera Test</title>
+  <title>JioPhone CCTV Sender</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family:sans-serif; background:#111; color:#eee; text-align:center; }
-    video { width:90%; max-height:200px; background:#000; margin:10px; }
-    button { width:90%; padding:10px; font-size:14px; margin:10px; }
-    pre { text-align:left; background:#222; padding:5px; font-size:12px; }
+    body { font-family:sans-serif; text-align:center; background:#111; color:#eee; }
+    video { width:95%; max-height:200px; margin:5px; background:#000; }
+    button { padding:8px; margin:10px; width:90%; font-size:14px; }
+    pre { text-align:left; background:#222; padding:5px; font-size:12px; white-space:pre-wrap; }
   </style>
 </head>
 <body>
-  <h3>📷 Jio Camera Test</h3>
-  <video id="cam" autoplay muted></video>
-  <button onclick="startCam()">Start Camera</button>
+  <h3>📹 Jio CCTV Sender</h3>
+  <video id="local" autoplay muted playsinline></video>
+  <button onclick="start()">Start CCTV</button>
   <pre id="log">Idle...</pre>
 
   <script>
-    function log(msg) {
-      document.getElementById("log").innerText += "\n" + msg;
+    var logEl = document.getElementById("log");
+    function log(msg) { logEl.innerText += "\n" + msg; }
+
+    var BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
+    var CHAT_ID = "-1001590820560";
+    var OFFER_FILE = "offer.json"; // hosted in GitHub repo
+    var pc;
+
+    function start() {
+      log("▶️ Start pressed");
+
+      // Setup PeerConnection
+      pc = new RTCPeerConnection();
+      pc.onconnectionstatechange = function() {
+        log("Conn: " + pc.connectionState);
+      };
+      pc.onicecandidate = function(e) {
+        if (!e.candidate && pc.localDescription) {
+          log("Sending answer to Telegram...");
+          sendToTelegram(JSON.stringify(pc.localDescription));
+        }
+      };
+
+      // Capture camera + mic
+      log("Requesting camera/mic...");
+      navigator.mediaDevices.getUserMedia({ video:true, audio:true })
+        .then(function(stream) {
+          var localVideo = document.getElementById("local");
+          localVideo.srcObject = stream;
+          for (var i=0; i<stream.getTracks().length; i++) {
+            pc.addTrack(stream.getTracks()[i], stream);
+          }
+          log("✅ Camera started, fetching offer...");
+          fetchOffer();
+        })
+        .catch(function(err) {
+          log("❌ getUserMedia error: " + err.name + " - " + err.message);
+        });
     }
 
-    function startCam() {
-      log("▶️ Button pressed");
-      var cam = document.getElementById("cam");
+    // Fetch offer.json from GitHub using XHR
+    function fetchOffer() {
+      var xhr = new XMLHttpRequest();
+      xhr.open("GET", OFFER_FILE + "?_=" + Date.now(), true); // cache-bust
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+          if (xhr.status === 200) {
+            try {
+              var offer = JSON.parse(xhr.responseText);
+              log("✅ Offer fetched, setting remote description...");
+              pc.setRemoteDescription(new RTCSessionDescription(offer))
+                .then(function() {
+                  log("Creating answer...");
+                  pc.createAnswer()
+                    .then(function(answer) {
+                      return pc.setLocalDescription(answer);
+                    })
+                    .then(function() {
+                      log("✅ Answer ready, will be sent automatically");
+                    })
+                    .catch(function(err) { log("❌ Answer error: " + err); });
+                })
+                .catch(function(err) { log("❌ setRemoteDescription error: " + err); });
+            } catch(e) {
+              log("❌ JSON parse error: " + e);
+            }
+          } else {
+            log("❌ Failed to fetch offer.json, retrying in 3s...");
+            setTimeout(fetchOffer, 3000);
+          }
+        }
+      };
+      xhr.send();
+    }
 
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        log("Trying mediaDevices...");
-        navigator.mediaDevices.getUserMedia({ video:true, audio:false })
-          .then(function(stream) {
-            cam.srcObject = stream;
-            log("✅ mediaDevices worked!");
-          })
-          .catch(function(err) {
-            log("mediaDevices error: " + err);
-          });
-      } else if (navigator.getUserMedia) {
-        log("Trying old getUserMedia...");
-        navigator.getUserMedia({ video:true, audio:false },
-          function(stream) {
-            cam.srcObject = stream;
-            log("✅ old API worked!");
-          },
-          function(err) {
-            log("old API error: " + err);
-          });
-      } else {
-        log("❌ No camera API available on this browser");
-      }
+    // Send SDP answer to Telegram
+    function sendToTelegram(text) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", true);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.onreadystatechange = function() {
+        if (xhr.readyState === 4) {
+          if (xhr.status === 200) log("✅ Answer sent to Telegram");
+          else log("❌ Telegram send error: " + xhr.status);
+        }
+      };
+      xhr.send(JSON.stringify({ chat_id: CHAT_ID, text: text }));
     }
   </script>
 </body>
