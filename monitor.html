@@ -1,54 +1,63 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Admin CCTV Viewer</title>
+  <title>Admin Offer Generator</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family: sans-serif; text-align: center; }
-    video { width: 100%; max-height: 480px; background: #000; }
-    textarea { width: 100%; height: 120px; font-size: 12px; margin-top: 5px; }
-    button { margin-top: 5px; }
+    body { font-family:sans-serif; text-align:center; margin:20px; }
+    button { padding:10px; margin:10px; font-size:16px; width:90%; }
+    textarea { width:90%; height:120px; font-size:12px; }
   </style>
 </head>
 <body>
-  <h3>📺 CCTV Viewer (Admin)</h3>
-  <video id="remote" autoplay playsinline></video>
+  <h2>Admin: Generate WebRTC Offer</h2>
+  <button onclick="generateOffer()">Generate Offer</button>
+  <textarea id="offerArea" placeholder="Offer JSON will appear here"></textarea>
   <br>
-  <button onclick="createOffer()">Create Offer</button>
-  <div>Copy this JSON → paste into GitHub offer.json:</div>
-  <textarea id="offer"></textarea>
-  <div>Paste Answer JSON from Telegram:</div>
-  <textarea id="answer"></textarea>
-  <button onclick="setAnswer()">Set Answer</button>
-  <div id="status"></div>
+  <button onclick="downloadOffer()">Download offer.json</button>
 
   <script>
-    let pc = new RTCPeerConnection();
-    let remote = document.getElementById("remote");
-    let offerBox = document.getElementById("offer");
-    let answerBox = document.getElementById("answer");
-    let status = document.getElementById("status");
+    var pc;
+    var offerArea = document.getElementById("offerArea");
 
-    pc.ontrack = e => {
-      remote.srcObject = e.streams[0];
-      status.innerText = "✅ Remote stream received";
-    };
+    function generateOffer() {
+      offerArea.value = "Generating offer...";
 
-    pc.oniceconnectionstatechange = () => {
-      status.innerText = "ICE state: " + pc.iceConnectionState;
-    };
+      // Create PeerConnection
+      pc = new RTCPeerConnection();
 
-    async function createOffer() {
-      let offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      offerBox.value = JSON.stringify(offer);
-      status.innerText = "📡 Offer created, save it to GitHub.";
+      // Optional: dummy media (required to generate media sections)
+      navigator.mediaDevices.getUserMedia({ video:true, audio:true })
+        .then(function(stream) {
+          stream.getTracks().forEach(function(track) {
+            pc.addTrack(track, stream);
+          });
+
+          // Create Offer
+          pc.createOffer()
+            .then(function(offer) {
+              return pc.setLocalDescription(offer);
+            })
+            .then(function() {
+              offerArea.value = JSON.stringify(pc.localDescription, null, 2);
+            })
+            .catch(function(err) {
+              offerArea.value = "Error creating offer: " + err;
+            });
+        })
+        .catch(function(err) {
+          offerArea.value = "Error accessing camera/mic: " + err;
+        });
     }
 
-    async function setAnswer() {
-      let ans = JSON.parse(answerBox.value);
-      await pc.setRemoteDescription(new RTCSessionDescription(ans));
-      status.innerText = "✅ Answer set, connection should start.";
+    function downloadOffer() {
+      var blob = new Blob([offerArea.value], {type:"application/json"});
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = url;
+      a.download = "offer.json";
+      a.click();
+      URL.revokeObjectURL(url);
     }
   </script>
 </body>
