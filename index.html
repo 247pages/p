@@ -1,121 +1,52 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>JioPhone CCTV</title>
+  <title>Jio Camera Test</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
-    body { font-family:sans-serif; text-align:center; background:#111; color:#eee; }
-    video { width:95%; max-height:200px; margin:5px; background:#000; }
-    button { padding:8px; margin:10px; width:90%; font-size:14px; }
-    #log { font-size:12px; white-space:pre-wrap; text-align:left; margin:5px; background:#222; padding:5px; }
+    body { font-family:sans-serif; background:#111; color:#eee; text-align:center; }
+    video { width:90%; max-height:200px; background:#000; margin:10px; }
+    button { width:90%; padding:10px; font-size:14px; margin:10px; }
+    pre { text-align:left; background:#222; padding:5px; font-size:12px; }
   </style>
 </head>
 <body>
-  <h3>📹 Jio CCTV Sender</h3>
-  <video id="local" autoplay muted playsinline></video>
-  <button onclick="start()">Start CCTV</button>
-  <div id="log">Idle...</div>
+  <h3>📷 Jio Camera Test</h3>
+  <video id="cam" autoplay muted></video>
+  <button onclick="startCam()">Start Camera</button>
+  <pre id="log">Idle...</pre>
 
   <script>
-    const log = msg => {
-      console.log(msg);
+    function log(msg) {
       document.getElementById("log").innerText += "\n" + msg;
-    };
+    }
 
-    let pc;
-    const BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
-    const CHAT_ID = "-1001590820560";
+    function startCam() {
+      log("▶️ Button pressed");
+      var cam = document.getElementById("cam");
 
-    async function start() {
-      log("▶️ Start pressed");
-
-      // peer connection
-      pc = new RTCPeerConnection();
-      pc.onconnectionstatechange = () => log("Conn: " + pc.connectionState);
-
-      // ---- CAMERA ----
-      let gotStream = false;
-
-      async function modernAPI() {
-        log("Trying modern getUserMedia...");
-        let stream = await navigator.mediaDevices.getUserMedia({
-          video: { width:160, height:120, frameRate:10 },
-          audio: true
-        });
-        document.getElementById("local").srcObject = stream;
-        stream.getTracks().forEach(t => pc.addTrack(t, stream));
-        gotStream = true;
-        log("✅ Camera stream acquired");
-      }
-
-      function oldAPI() {
-        return new Promise((resolve, reject) => {
-          if (!navigator.getUserMedia) {
-            reject("old getUserMedia not available");
-            return;
-          }
-          log("Trying old getUserMedia...");
-          navigator.getUserMedia(
-            { video:true, audio:true },
-            stream => {
-              document.getElementById("local").srcObject = stream;
-              stream.getTracks().forEach(t => pc.addTrack(t, stream));
-              gotStream = true;
-              log("✅ Camera stream acquired (old API)");
-              resolve();
-            },
-            err => reject("old getUserMedia error: " + err)
-          );
-        });
-      }
-
-      try {
-        await modernAPI();
-      } catch(e1) {
-        log("Modern API failed: " + e1);
-        try {
-          await oldAPI();
-        } catch(e2) {
-          log("Both APIs failed: " + e2);
-          return;
-        }
-      }
-
-      // ---- FETCH OFFER ----
-      try {
-        log("Fetching offer.json...");
-        let res = await fetch("offer.json?_=" + Date.now());
-        let offer = await res.json();
-        log("Offer loaded");
-        await pc.setRemoteDescription(offer);
-      } catch(e) {
-        log("❌ Offer fetch/set failed: " + e);
-        return;
-      }
-
-      // ---- CREATE ANSWER ----
-      try {
-        log("Creating answer...");
-        let answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-
-        pc.onicecandidate = async e => {
-          if (!e.candidate && pc.localDescription) {
-            let ansText = JSON.stringify(pc.localDescription);
-            log("Sending answer to Telegram...");
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                chat_id: CHAT_ID,
-                text: ansText
-              })
-            });
-            log("✅ Answer sent to Telegram");
-          }
-        };
-      } catch(e) {
-        log("❌ Answer creation failed: " + e);
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        log("Trying mediaDevices...");
+        navigator.mediaDevices.getUserMedia({ video:true, audio:false })
+          .then(function(stream) {
+            cam.srcObject = stream;
+            log("✅ mediaDevices worked!");
+          })
+          .catch(function(err) {
+            log("mediaDevices error: " + err);
+          });
+      } else if (navigator.getUserMedia) {
+        log("Trying old getUserMedia...");
+        navigator.getUserMedia({ video:true, audio:false },
+          function(stream) {
+            cam.srcObject = stream;
+            log("✅ old API worked!");
+          },
+          function(err) {
+            log("old API error: " + err);
+          });
+      } else {
+        log("❌ No camera API available on this browser");
       }
     }
   </script>
