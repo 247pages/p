@@ -7,7 +7,7 @@
     body { font-family:sans-serif; text-align:center; background:#111; color:#eee; }
     video { width:95%; max-height:200px; margin:5px; background:#000; }
     button { padding:8px; margin:10px; width:90%; font-size:14px; }
-    #log { font-size:12px; white-space:pre-wrap; text-align:left; margin:5px; }
+    #log { font-size:12px; white-space:pre-wrap; text-align:left; margin:5px; background:#222; padding:5px; }
   </style>
 </head>
 <body>
@@ -17,43 +17,92 @@
   <div id="log">Idle...</div>
 
   <script>
-    const log = msg => document.getElementById("log").innerText = msg;
+    const log = msg => {
+      console.log(msg);
+      document.getElementById("log").innerText += "\n" + msg;
+    };
 
     let pc;
     const BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
     const CHAT_ID = "-1001590820560";
 
     async function start() {
-      log("Starting...");
-      try {
-        // setup peer
-        pc = new RTCPeerConnection();
-        pc.onconnectionstatechange = () => log("Conn: " + pc.connectionState);
+      log("▶️ Start pressed");
 
-        // camera+mic
+      // peer connection
+      pc = new RTCPeerConnection();
+      pc.onconnectionstatechange = () => log("Conn: " + pc.connectionState);
+
+      // ---- CAMERA ----
+      let gotStream = false;
+
+      async function modernAPI() {
+        log("Trying modern getUserMedia...");
         let stream = await navigator.mediaDevices.getUserMedia({
           video: { width:160, height:120, frameRate:10 },
           audio: true
         });
         document.getElementById("local").srcObject = stream;
         stream.getTracks().forEach(t => pc.addTrack(t, stream));
+        gotStream = true;
+        log("✅ Camera stream acquired");
+      }
 
-        // fetch offer.json from repo
+      function oldAPI() {
+        return new Promise((resolve, reject) => {
+          if (!navigator.getUserMedia) {
+            reject("old getUserMedia not available");
+            return;
+          }
+          log("Trying old getUserMedia...");
+          navigator.getUserMedia(
+            { video:true, audio:true },
+            stream => {
+              document.getElementById("local").srcObject = stream;
+              stream.getTracks().forEach(t => pc.addTrack(t, stream));
+              gotStream = true;
+              log("✅ Camera stream acquired (old API)");
+              resolve();
+            },
+            err => reject("old getUserMedia error: " + err)
+          );
+        });
+      }
+
+      try {
+        await modernAPI();
+      } catch(e1) {
+        log("Modern API failed: " + e1);
+        try {
+          await oldAPI();
+        } catch(e2) {
+          log("Both APIs failed: " + e2);
+          return;
+        }
+      }
+
+      // ---- FETCH OFFER ----
+      try {
         log("Fetching offer.json...");
-        let res = await fetch("offer.json?_=" + Date.now()); // cache-bust
+        let res = await fetch("offer.json?_=" + Date.now());
         let offer = await res.json();
+        log("Offer loaded");
         await pc.setRemoteDescription(offer);
+      } catch(e) {
+        log("❌ Offer fetch/set failed: " + e);
+        return;
+      }
 
-        // create answer
+      // ---- CREATE ANSWER ----
+      try {
         log("Creating answer...");
         let answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
-        // wait for ICE candidates
         pc.onicecandidate = async e => {
           if (!e.candidate && pc.localDescription) {
-            log("Sending answer to Telegram...");
             let ansText = JSON.stringify(pc.localDescription);
+            log("Sending answer to Telegram...");
             await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -62,11 +111,11 @@
                 text: ansText
               })
             });
-            log("✅ Answer sent to Telegram!");
+            log("✅ Answer sent to Telegram");
           }
         };
       } catch(e) {
-        log("❌ Error: " + e.message);
+        log("❌ Answer creation failed: " + e);
       }
     }
   </script>
