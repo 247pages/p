@@ -1,39 +1,50 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Admin Offer Generator</title>
+  <title>Admin: WebRTC CCTV</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family:sans-serif; text-align:center; margin:20px; }
     button { padding:10px; margin:10px; font-size:16px; width:90%; }
-    textarea { width:90%; height:120px; font-size:12px; }
+    textarea { width:90%; height:120px; font-size:12px; margin-top:5px; }
+    video { width:95%; max-height:200px; margin:10px; background:#000; }
   </style>
 </head>
 <body>
-  <h2>Admin: Generate WebRTC Offer</h2>
+  <h2>Admin: WebRTC CCTV MVP</h2>
+
   <button onclick="generateOffer()">Generate Offer</button>
   <textarea id="offerArea" placeholder="Offer JSON will appear here"></textarea>
-  <br>
   <button onclick="downloadOffer()">Download offer.json</button>
+
+  <h3>Paste JioPhone Answer Here:</h3>
+  <textarea id="answerArea" placeholder="Paste answer JSON from Telegram"></textarea>
+  <button onclick="setAnswer()">Set Answer</button>
+
+  <h3>Remote Video:</h3>
+  <video id="remote" autoplay playsinline></video>
 
   <script>
     var pc;
     var offerArea = document.getElementById("offerArea");
+    var remoteVideo = document.getElementById("remote");
 
     function generateOffer() {
       offerArea.value = "Generating offer...";
-
-      // Create PeerConnection
       pc = new RTCPeerConnection();
 
-      // Optional: dummy media (required to generate media sections)
+      // Handle remote tracks
+      pc.ontrack = function(e) {
+        remoteVideo.srcObject = e.streams[0];
+      };
+
+      // Dummy media to generate SDP
       navigator.mediaDevices.getUserMedia({ video:true, audio:true })
         .then(function(stream) {
           stream.getTracks().forEach(function(track) {
             pc.addTrack(track, stream);
           });
 
-          // Create Offer
           pc.createOffer()
             .then(function(offer) {
               return pc.setLocalDescription(offer);
@@ -58,6 +69,21 @@
       a.download = "offer.json";
       a.click();
       URL.revokeObjectURL(url);
+    }
+
+    function setAnswer() {
+      try {
+        var ans = JSON.parse(document.getElementById("answerArea").value);
+        pc.setRemoteDescription(new RTCSessionDescription(ans))
+          .then(function() {
+            alert("✅ Remote description set! JioPhone feed should appear below.");
+          })
+          .catch(function(err) {
+            alert("❌ Error setting remote description: " + err);
+          });
+      } catch(e) {
+        alert("❌ Invalid JSON: " + e);
+      }
     }
   </script>
 </body>
