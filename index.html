@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>A7cams JioPhone CCTV to Telegram</title>
+  <title>JioPhone CCTV Base64</title>
 </head>
 <body>
-  <h3>📷 JioPhone CCTV</h3>
+  <h3>📷 JioPhone CCTV (Base64)</h3>
   <video id="video" autoplay playsinline width="240" height="180"></video>
   <canvas id="canvas" width="240" height="180" style="display:none"></canvas>
   <p id="status">Idle...</p>
@@ -15,8 +15,8 @@
     const ctx = canvas.getContext("2d");
     const statusEl = document.getElementById("status");
 
-    const chatId = "-1001590820560"; // your chat ID
-    const token = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg"; // your bot token
+    const chatId = "-1001590820560";
+    const token = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
 
     async function initCamera() {
       try {
@@ -25,33 +25,32 @@
         video.srcObject = stream;
         statusEl.innerText = "Camera started ✅";
 
-        // Start capture loop every 5s
+        // Try sending every 5s
         setInterval(captureAndSend, 5000);
       } catch (err) {
-        console.error(err);
-        statusEl.innerText = "Camera failed ❌: " + err;
+        statusEl.innerText = "Camera error ❌ " + err;
       }
     }
 
     async function captureAndSend() {
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg"));
+        const dataURL = canvas.toDataURL("image/jpeg");
 
-        let formData = new FormData();
-        formData.append("chat_id", chatId);
-        formData.append("photo", blob, "frame.jpg");
+        statusEl.innerText = "Sending text frame...";
 
-        statusEl.innerText = "Sending photo...";
-        await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
           method: "POST",
-          body: formData
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            chat_id: chatId,
+            text: "📷 Frame: " + dataURL.substring(0, 200) + "...", // sending partial base64
+          }),
         });
 
-        statusEl.innerText = "Photo sent ✅ " + new Date().toLocaleTimeString();
+        statusEl.innerText = "Frame text sent ✅ " + new Date().toLocaleTimeString();
       } catch (err) {
-        console.error(err);
-        statusEl.innerText = "Send failed ❌: " + err;
+        statusEl.innerText = "Send error ❌ " + err;
       }
     }
 
