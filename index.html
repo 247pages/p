@@ -1,119 +1,61 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>JioPhone CCTV Snapshots</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body { font-family:sans-serif; background:#111; color:#eee; text-align:center; }
-    video { width:90%; background:#000; margin:10px; }
-    button { padding:10px; margin:10px; width:90%; font-size:14px; }
-    pre { text-align:left; background:#222; padding:5px; font-size:12px; white-space:pre-wrap; }
-  </style>
+  <title>A7cams JioPhone CCTV to Telegram</title>
 </head>
 <body>
-  <h3>📸 JioPhone CCTV Snapshots</h3>
-  <video id="video" autoplay playsinline muted></video>
-  <canvas id="canvas" style="display:none;"></canvas>
-  <button onclick="start()">Start Sending</button>
-  <button onclick="stop()">Stop</button>
-  <pre id="log">Idle...</pre>
+  <h3>📷 JioPhone CCTV</h3>
+  <video id="video" autoplay playsinline width="240" height="180"></video>
+  <canvas id="canvas" width="240" height="180" style="display:none"></canvas>
+  <p id="status">Idle...</p>
 
   <script>
-    var BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
-    var CHAT_ID = "-1001590820560";
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const statusEl = document.getElementById("status");
 
-    var video = document.getElementById("video");
-    var canvas = document.getElementById("canvas");
-    var logEl = document.getElementById("log");
-    var intervalId = null;
+    const chatId = "-1001590820560"; // your chat ID
+    const token = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg"; // your bot token
 
-    function log(msg) {
-      logEl.innerText += "\n" + msg;
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-
-    function start() {
-      log("▶️ Starting camera...");
-      // Use old getUserMedia for KaiOS
-      var gum = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ||
-                navigator.getUserMedia ||
-                navigator.webkitGetUserMedia ||
-                navigator.mozGetUserMedia;
-
-      if (!gum) {
-        log("❌ getUserMedia not supported on this device");
-        return;
-      }
-
-      gum.call(navigator, { video: true, audio: false }, function(stream) {
+    async function initCamera() {
+      try {
+        statusEl.innerText = "Requesting camera...";
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
         video.srcObject = stream;
-        log("✅ Camera started");
-        intervalId = setInterval(captureAndSend, 5000);
-      }, function(err) {
-        log("❌ Camera error: " + err.message);
-      });
-    }
+        statusEl.innerText = "Camera started ✅";
 
-    function stop() {
-      if (intervalId) clearInterval(intervalId);
-      intervalId = null;
-      if (video.srcObject) {
-        video.srcObject.getTracks().forEach(t => t.stop());
-        video.srcObject = null;
+        // Start capture loop every 5s
+        setInterval(captureAndSend, 5000);
+      } catch (err) {
+        console.error(err);
+        statusEl.innerText = "Camera failed ❌: " + err;
       }
-      log("⏹️ Stopped");
     }
 
-    function captureAndSend() {
-      if (!video.videoWidth) {
-        log("⚠️ Waiting for video...");
-        return;
+    async function captureAndSend() {
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg"));
+
+        let formData = new FormData();
+        formData.append("chat_id", chatId);
+        formData.append("photo", blob, "frame.jpg");
+
+        statusEl.innerText = "Sending photo...";
+        await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, {
+          method: "POST",
+          body: formData
+        });
+
+        statusEl.innerText = "Photo sent ✅ " + new Date().toLocaleTimeString();
+      } catch (err) {
+        console.error(err);
+        statusEl.innerText = "Send failed ❌: " + err;
       }
-
-      var ctx = canvas.getContext("2d");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      var dataURL = canvas.toDataURL("image/jpeg", 0.5);
-
-      log("📤 Sending snapshot...");
-      sendToTelegram(dataURL);
     }
 
-    function sendToTelegram(base64Image) {
-      // Strip prefix "data:image/jpeg;base64,"
-      var b64 = base64Image.split(",")[1];
-      var blob = b64ToBlob(b64, "image/jpeg");
-
-      var formData = new FormData();
-      formData.append("chat_id", CHAT_ID);
-      formData.append("photo", blob, "snapshot.jpg");
-
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", "https://api.telegram.org/bot" + BOT_TOKEN + "/sendPhoto", true);
-      xhr.onreadystatechange = function () {
-        if (xhr.readyState === 4) {
-          if (xhr.status === 200) log("✅ Sent to Telegram");
-          else log("❌ Error: " + xhr.status);
-        }
-      };
-      xhr.send(formData);
-    }
-
-    function b64ToBlob(b64Data, contentType) {
-      var byteChars = atob(b64Data);
-      var byteArrays = [];
-      for (var offset = 0; offset < byteChars.length; offset += 512) {
-        var slice = byteChars.slice(offset, offset + 512);
-        var byteNumbers = new Array(slice.length);
-        for (var i = 0; i < slice.length; i++) {
-          byteNumbers[i] = slice.charCodeAt(i);
-        }
-        byteArrays.push(new Uint8Array(byteNumbers));
-      }
-      return new Blob(byteArrays, {type: contentType});
-    }
+    initCamera();
   </script>
 </body>
 </html>
