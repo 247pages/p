@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>JioPhone CCTV Base64</title>
+  <title>JioPhone CCTV Photo</title>
 </head>
 <body>
-  <h3>📷 JioPhone CCTV (Base64) A7cams</h3>
+  <h3>📷 JioPhone CCTV to Telegram</h3>
   <video id="video" autoplay playsinline width="240" height="180"></video>
   <canvas id="canvas" width="240" height="180" style="display:none"></canvas>
   <p id="status">Idle...</p>
@@ -18,9 +18,7 @@
     var chatId = "-1001590820560";
     var token = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
 
-    function log(msg) {
-      statusEl.innerText = msg;
-    }
+    function log(msg) { statusEl.innerText = msg; }
 
     function initCamera() {
       log("Requesting camera...");
@@ -33,7 +31,6 @@
         .then(function(stream) {
           video.srcObject = stream;
           log("✅ Camera started");
-
           setInterval(captureAndSend, 5000);
         })
         .catch(function(err) {
@@ -42,30 +39,29 @@
     }
 
     function captureAndSend() {
-      try {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        var dataURL = canvas.toDataURL("image/jpeg");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        log("Sending frame...");
+      canvas.toBlob(function(blob) {
+        log("Sending photo...");
 
-        fetch("https://api.telegram.org/bot" + token + "/sendMessage", {
+        var formData = new FormData();
+        formData.append("chat_id", chatId);
+        formData.append("photo", blob, "frame.jpg");
+
+        fetch("https://api.telegram.org/bot" + token + "/sendPhoto", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: "📷 Frame: " + dataURL.substring(0, 150) + "..."
-          })
+          body: formData
         })
-        .then(function() {
-          log("Frame sent ✅ " + new Date().toLocaleTimeString());
+        .then(r => r.json())
+        .then(function(res) {
+          if (res.ok) log("✅ Photo sent " + new Date().toLocaleTimeString());
+          else log("❌ Telegram error: " + JSON.stringify(res));
         })
         .catch(function(err) {
           log("Send error: " + err);
         });
 
-      } catch (e) {
-        log("Capture error: " + e);
-      }
+      }, "image/jpeg");
     }
 
     initCamera();
