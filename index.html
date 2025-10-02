@@ -7,6 +7,7 @@
     body { font-family:sans-serif; text-align:center; background:#111; color:#eee; }
     video { width:95%; max-height:200px; margin:5px; background:#000; }
     button { padding:8px; margin:10px; width:90%; font-size:14px; }
+    textarea { width:90%; height:80px; font-size:12px; margin-top:5px; }
     pre { text-align:left; background:#222; padding:5px; font-size:12px; white-space:pre-wrap; }
   </style>
 </head>
@@ -15,6 +16,10 @@
   <video id="local" autoplay muted playsinline></video>
   <button onclick="start()">Start CCTV</button>
   <pre id="log">Idle...</pre>
+
+  <h4>Paste Remote ICE Candidate:</h4>
+  <textarea id="remoteIceArea" placeholder="Paste Admin ICE JSON"></textarea>
+  <button onclick="addRemoteIce()">Add Remote ICE</button>
 
   <script>
     var logEl = document.getElementById("log");
@@ -33,10 +38,14 @@
       pc.onconnectionstatechange = function() {
         log("Conn: " + pc.connectionState);
       };
+
+      // ICE candidates
       pc.onicecandidate = function(e) {
-        if (!e.candidate && pc.localDescription) {
-          log("Sending answer to Telegram...");
-          sendToTelegram(JSON.stringify(pc.localDescription));
+        if (e.candidate) {
+          log("📤 Sending ICE candidate...");
+          sendToTelegram("JIO_ICE:" + JSON.stringify(e.candidate));
+        } else {
+          log("✅ Finished gathering ICE");
         }
       };
 
@@ -44,11 +53,8 @@
       log("Requesting camera/mic...");
       navigator.mediaDevices.getUserMedia({ video:true, audio:true })
         .then(function(stream) {
-          var localVideo = document.getElementById("local");
-          localVideo.srcObject = stream;
-          for (var i=0; i<stream.getTracks().length; i++) {
-            pc.addTrack(stream.getTracks()[i], stream);
-          }
+          document.getElementById("local").srcObject = stream;
+          stream.getTracks().forEach(track => pc.addTrack(track, stream));
           log("✅ Camera started, fetching offer...");
           fetchOffer();
         })
@@ -57,7 +63,7 @@
         });
     }
 
-    // Fetch offer.json from GitHub using XHR
+    // Fetch offer.json from GitHub
     function fetchOffer() {
       var xhr = new XMLHttpRequest();
       xhr.open("GET", OFFER_FILE + "?_=" + Date.now(), true); // cache-bust
@@ -68,18 +74,16 @@
               var offer = JSON.parse(xhr.responseText);
               log("✅ Offer fetched, setting remote description...");
               pc.setRemoteDescription(new RTCSessionDescription(offer))
-                .then(function() {
+                .then(() => {
                   log("Creating answer...");
-                  pc.createAnswer()
-                    .then(function(answer) {
-                      return pc.setLocalDescription(answer);
-                    })
-                    .then(function() {
-                      log("✅ Answer ready, will be sent automatically");
-                    })
-                    .catch(function(err) { log("❌ Answer error: " + err); });
+                  return pc.createAnswer();
                 })
-                .catch(function(err) { log("❌ setRemoteDescription error: " + err); });
+                .then(answer => pc.setLocalDescription(answer))
+                .then(() => {
+                  log("📤 Sending SDP answer to Telegram...");
+                  sendToTelegram("JIO_ANSWER:" + JSON.stringify(pc.localDescription));
+                })
+                .catch(err => log("❌ SDP error: " + err));
             } catch(e) {
               log("❌ JSON parse error: " + e);
             }
@@ -92,17 +96,23 @@
       xhr.send();
     }
 
-    // Send SDP answer to Telegram
+    // Add remote ICE candidate from Admin
+    function addRemoteIce() {
+      try {
+        var cand = JSON.parse(document.getElementById("remoteIceArea").value);
+        pc.addIceCandidate(new RTCIceCandidate(cand))
+          .then(() => log("✅ Remote ICE added"))
+          .catch(err => log("❌ ICE add error: " + err));
+      } catch(e) {
+        log("❌ Invalid ICE JSON: " + e);
+      }
+    }
+
+    // Send to Telegram
     function sendToTelegram(text) {
       var xhr = new XMLHttpRequest();
       xhr.open("POST", "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", true);
       xhr.setRequestHeader("Content-Type", "application/json");
-      xhr.onreadystatechange = function() {
-        if (xhr.readyState === 4) {
-          if (xhr.status === 200) log("✅ Answer sent to Telegram");
-          else log("❌ Telegram send error: " + xhr.status);
-        }
-      };
       xhr.send(JSON.stringify({ chat_id: CHAT_ID, text: text }));
     }
   </script>
