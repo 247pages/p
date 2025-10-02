@@ -6,41 +6,47 @@
   <style>
     body { font-family:sans-serif; text-align:center; margin:20px; }
     button { padding:10px; margin:10px; font-size:16px; width:90%; }
-    textarea { width:90%; height:120px; font-size:12px; margin-top:5px; }
+    textarea { width:90%; height:100px; font-size:12px; margin-top:5px; }
     video { width:95%; max-height:200px; margin:10px; background:#000; }
   </style>
 </head>
 <body>
-  <h2>Admin: WebRTC CCTV MVP</h2>
+  <h2>Admin: WebRTC CCTV</h2>
 
   <button onclick="generateOffer()">Generate Offer</button>
   <textarea id="offerArea" placeholder="Offer JSON will appear here"></textarea>
   <button onclick="downloadOffer()">Download offer.json</button>
 
   <h3>Paste JioPhone Answer Here:</h3>
-  <textarea id="answerArea" placeholder="Paste answer JSON from Telegram"></textarea>
+  <textarea id="answerArea"></textarea>
   <button onclick="setAnswer()">Set Answer</button>
+
+  <h3>Paste JioPhone ICE Candidate:</h3>
+  <textarea id="remoteIceArea"></textarea>
+  <button onclick="addRemoteIce()">Add Remote ICE</button>
 
   <h3>Remote Video:</h3>
   <video id="remote" autoplay playsinline></video>
 
   <script>
+    var BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
+    var CHAT_ID = "-1001590820560";
     var pc = null;
     var offerArea = document.getElementById("offerArea");
     var remoteVideo = document.getElementById("remote");
 
     function createNewPC() {
-      if (pc) pc.close(); // Close old connection if exists
+      if (pc) pc.close();
       pc = new RTCPeerConnection();
 
-      // Handle remote tracks
-      pc.ontrack = function(e) {
+      pc.ontrack = e => {
         remoteVideo.srcObject = e.streams[0];
       };
 
-      // Optional: log state changes
-      pc.onconnectionstatechange = function() {
-        console.log("ConnState:", pc.connectionState, "SignalingState:", pc.signalingState);
+      pc.onicecandidate = e => {
+        if (e.candidate) {
+          sendToTelegram("ADMIN_ICE:" + JSON.stringify(e.candidate));
+        }
       };
     }
 
@@ -48,29 +54,17 @@
       offerArea.value = "Generating offer...";
       createNewPC();
 
-      // Dummy media (required to generate media sections)
+      // Add dummy media (needed for SDP sections)
       navigator.mediaDevices.getUserMedia({ video:true, audio:true })
-        .then(function(stream) {
-          stream.getTracks().forEach(function(track) {
-            pc.addTrack(track, stream);
-          });
-
-          // Create Offer
-          pc.createOffer()
-            .then(function(offer) {
-              return pc.setLocalDescription(offer); // MUST set local description first
-            })
-            .then(function() {
-              offerArea.value = JSON.stringify(pc.localDescription, null, 2);
-              console.log("✅ Offer generated and local description set");
-            })
-            .catch(function(err) {
-              offerArea.value = "Error creating offer: " + err;
-            });
+        .then(stream => {
+          stream.getTracks().forEach(track => pc.addTrack(track, stream));
+          return pc.createOffer();
         })
-        .catch(function(err) {
-          offerArea.value = "Error accessing camera/mic: " + err;
-        });
+        .then(offer => pc.setLocalDescription(offer))
+        .then(() => {
+          offerArea.value = JSON.stringify(pc.localDescription, null, 2);
+        })
+        .catch(err => offerArea.value = "Error: " + err);
     }
 
     function downloadOffer() {
@@ -86,31 +80,35 @@
     function setAnswer() {
       try {
         var ans = JSON.parse(document.getElementById("answerArea").value);
-
-        if (!pc) {
-          alert("❌ No PeerConnection exists. Generate an offer first.");
-          return;
-        }
-
-        console.log("SignalingState before setRemoteDescription:", pc.signalingState);
-
-        // Only set remote description if we are in 'have-local-offer'
         if (pc.signalingState === "have-local-offer") {
           pc.setRemoteDescription(new RTCSessionDescription(ans))
-            .then(function() {
-              alert("✅ Remote description set! JioPhone feed should appear below.");
-            })
-            .catch(function(err) {
-              alert("❌ Error setting remote description: " + err);
-            });
+            .then(() => alert("✅ Remote description set"))
+            .catch(err => alert("❌ Error: " + err));
         } else {
-          alert("❌ Cannot set remote description in current signaling state: " + pc.signalingState);
+          alert("❌ Wrong signaling state: " + pc.signalingState);
         }
-
       } catch(e) {
         alert("❌ Invalid JSON: " + e);
       }
     }
+
+    function addRemoteIce() {
+      try {
+        var cand = JSON.parse(document.getElementById("remoteIceArea").value);
+        pc.addIceCandidate(new RTCIceCandidate(cand))
+          .then(() => alert("✅ Remote ICE added"))
+          .catch(err => alert("❌ ICE add error: " + err));
+      } catch(e) {
+        alert("❌ Invalid ICE JSON: " + e);
+      }
+    }
+
+    function sendToTelegram(text) {
+      var xhr = new XMLHttpRequest();
+      xhr.open("POST", "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", true);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(JSON.stringify({ chat_id: CHAT_ID, text: text }));
+    }
   </script>
 </body>
-</html
+</html>
