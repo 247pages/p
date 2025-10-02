@@ -1,114 +1,205 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
 <head>
-  <title>Admin: WebRTC CCTV</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>
-    body { font-family:sans-serif; text-align:center; margin:20px; }
-    button { padding:10px; margin:10px; font-size:16px; width:90%; }
-    textarea { width:90%; height:100px; font-size:12px; margin-top:5px; }
-    video { width:95%; max-height:200px; margin:10px; background:#000; }
-  </style>
+<meta charset="utf-8"/>
+<title>Admin Audio Pair — Receiver</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<style>
+  body{font-family:sans-serif;color:#111;background:#f6f7f9;padding:10px;text-align:center}
+  video{width:95%;background:#000;height:180px;margin-top:10px}
+  button{padding:10px;margin:8px;width:95%}
+  pre{white-space:pre-wrap;text-align:left;background:#fff;padding:8px;border-radius:6px;border:1px solid #ddd; height:140px; overflow:auto}
+  textarea{width:95%;height:80px}
+</style>
 </head>
 <body>
-  <h2>Admin: WebRTC CCTV</h2>
-
-  <button onclick="generateOffer()">Generate Offer</button>
-  <textarea id="offerArea" placeholder="Offer JSON will appear here"></textarea>
-  <button onclick="downloadOffer()">Download offer.json</button>
-
-  <h3>Paste JioPhone Answer Here:</h3>
-  <textarea id="answerArea"></textarea>
-  <button onclick="setAnswer()">Set Answer</button>
-
-  <h3>Paste JioPhone ICE Candidate:</h3>
-  <textarea id="remoteIceArea"></textarea>
-  <button onclick="addRemoteIce()">Add Remote ICE</button>
-
-  <h3>Remote Video:</h3>
+  <h2>Admin Audio Pair — Receiver</h2>
+  <div>
+    <button id="listenOffer">Start Listening for Offer</button>
+    <button id="stopListen">Stop Listening</button>
+  </div>
+  <h4>Decoded Offer</h4>
+  <textarea id="decodedOffer" placeholder="Decoded offer will appear here"></textarea>
+  <button id="setOffer">Set Offer & Create Answer (and play audio answer)</button>
+  <h4>Log</h4><pre id="log">Idle...</pre>
+  <h4>Remote video (from Jio)</h4>
   <video id="remote" autoplay playsinline></video>
 
-  <script>
-    var BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
-    var CHAT_ID = "-1001590820560";
-    var pc = null;
-    var offerArea = document.getElementById("offerArea");
-    var remoteVideo = document.getElementById("remote");
+<script>
+var logEl = document.getElementById('log');
+function log(s){ logEl.innerText += "\n" + s; }
 
-    function createNewPC() {
-      if (pc) pc.close();
-      pc = new RTCPeerConnection();
+var decodedOfferArea = document.getElementById('decodedOffer');
+var remoteVideo = document.getElementById('remote');
 
-      pc.ontrack = e => {
-        remoteVideo.srcObject = e.streams[0];
-      };
+var baseFreq = 1200;
+var freqStep = 200;
+var symbolDuration = 140;
+var markerFreq = 5000;
 
-      pc.onicecandidate = e => {
-        if (e.candidate) {
-          sendToTelegram("ADMIN_ICE:" + JSON.stringify(e.candidate));
-        }
-      };
+function nibbleFreq(n){ return baseFreq + n*freqStep; }
+
+// hex to string
+function hexToStr(hex){
+  var bytes = [];
+  for (var i=0;i<hex.length;i+=2) bytes.push(parseInt(hex.substr(i,2),16));
+  var out="";
+  for (var i=0;i<bytes.length;i++){
+    var b = bytes[i];
+    if ((b&0x80)===0) out += String.fromCharCode(b);
+    else if ((b&0xe0)===0xc0){ var b2=bytes[++i]; out += String.fromCharCode(((b&0x1f)<<6)|(b2&0x3f)); }
+    else { var b2=bytes[++i]; var b3=bytes[++i]; out += String.fromCharCode(((b&0x0f)<<12)|((b2&0x3f)<<6)|(b3&0x3f)); }
+  }
+  return out;
+}
+function strToHex(s){
+  var h="";
+  for (var i=0;i<s.length;i++){
+    var code = s.charCodeAt(i);
+    if (code<0x80){ h += ("0"+code.toString(16)).slice(-2); }
+    else if (code<0x800){ h += ("0"+(0xc0|(code>>6)).toString(16)).slice(-2); h += ("0"+(0x80|(code&0x3f)).toString(16)).slice(-2); }
+    else { h += ("0"+(0xe0|(code>>12)).toString(16)).slice(-2); h += ("0"+(0x80|((code>>6)&0x3f)).toString(16)).slice(-2); h += ("0"+(0x80|(code&0x3f)).toString(16)).slice(-2); }
+  }
+  return h;
+}
+
+// hex -> nibble array
+function hexToNibbles(hex){
+  var arr=[];
+  for (var i=0;i<hex.length;i++){ arr.push(parseInt(hex[i],16)); }
+  return arr;
+}
+
+// play message similar to broadcaster
+function playMessageHex(hexStr, onDone){
+  var nibbles = hexToNibbles(hexStr);
+  try {
+    var ctx = new (window.AudioContext || window.webkitAudioContext)();
+    var now = ctx.currentTime;
+    var gain = ctx.createGain(); gain.connect(ctx.destination); gain.gain.value = 0.9;
+    var startOsc = ctx.createOscillator(); startOsc.type='sine'; startOsc.frequency.value=markerFreq; startOsc.connect(gain); startOsc.start(now); startOsc.stop(now+0.25);
+    for (var i=0;i<nibbles.length;i++){
+      (function(i){
+        var n=nibbles[i];
+        var osc = ctx.createOscillator(); osc.type='sine'; osc.frequency.value=nibbleFreq(n); osc.connect(gain);
+        var start = now + 0.25 + (i*symbolDuration/1000);
+        var end = start + (symbolDuration/1000);
+        osc.start(start); osc.stop(end);
+      })(i);
     }
+    var total = 0.25 + (nibbles.length*symbolDuration/1000);
+    var endOsc = ctx.createOscillator(); endOsc.type='sine'; endOsc.frequency.value=markerFreq; endOsc.connect(gain);
+    endOsc.start(now+total); endOsc.stop(now+total+0.25);
+    setTimeout(function(){ ctx.close(); if (onDone) onDone(); }, (total+0.3)*1000);
+  } catch(e){ log("Play error: " + e); if (onDone) onDone(); }
+}
 
-    function generateOffer() {
-      offerArea.value = "Generating offer...";
-      createNewPC();
+// receiver creation reusing similar goertzel-ish approach
+function createReceiver(onSymbol){
+  var ctx = new (window.AudioContext || window.webkitAudioContext)();
+  var analyser = ctx.createAnalyser(); analyser.fftSize = 2048;
+  var data = new Uint8Array(analyser.frequencyBinCount);
+  var freqs=[];
+  for (var i=0;i<16;i++) freqs.push(nibbleFreq(i));
+  freqs.push(markerFreq);
+  var bins = freqs.map(function(f){ return Math.round(f * analyser.fftSize / ctx.sampleRate); });
+  var src=null, listening=false;
+  function start(stream){
+    src = ctx.createMediaStreamSource(stream);
+    src.connect(analyser);
+    listening=true;
+    var interval = setInterval(function(){
+      if (!listening){ clearInterval(interval); return; }
+      analyser.getByteFrequencyData(data);
+      var best=-1,bestVal=-1;
+      for (var i=0;i<bins.length;i++){
+        var v = data[bins[i]] || 0;
+        if (v>bestVal){ bestVal=v; best=i; }
+      }
+      if (bestVal > 120) onSymbol(best,bestVal);
+      else onSymbol(-1,bestVal);
+    }, symbolDuration);
+  }
+  function stop(){ listening=false; try{ if (src) src.disconnect(); }catch(e){} try{ctx.close(); }catch(e){} }
+  return {start:start, stop:stop};
+}
 
-      // Add dummy media (needed for SDP sections)
-      navigator.mediaDevices.getUserMedia({ video:true, audio:true })
-        .then(stream => {
-          stream.getTracks().forEach(track => pc.addTrack(track, stream));
-          return pc.createOffer();
-        })
-        .then(offer => pc.setLocalDescription(offer))
-        .then(() => {
-          offerArea.value = JSON.stringify(pc.localDescription, null, 2);
-        })
-        .catch(err => offerArea.value = "Error: " + err);
-    }
+// Listening state
+var recv = null;
+var captured = "";
+var capturing = false;
 
-    function downloadOffer() {
-      var blob = new Blob([offerArea.value], {type:"application/json"});
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = url;
-      a.download = "offer.json";
-      a.click();
-      URL.revokeObjectURL(url);
-    }
-
-    function setAnswer() {
-      try {
-        var ans = JSON.parse(document.getElementById("answerArea").value);
-        if (pc.signalingState === "have-local-offer") {
-          pc.setRemoteDescription(new RTCSessionDescription(ans))
-            .then(() => alert("✅ Remote description set"))
-            .catch(err => alert("❌ Error: " + err));
+document.getElementById('listenOffer').addEventListener('click', function(){
+  decodedOffer.value = "";
+  log("Requesting mic to listen for offer (place broadcaster near mic)...");
+  navigator.mediaDevices.getUserMedia({audio:true})
+    .then(function(stream){
+      recv = createReceiver(function(symIndex, strength){
+        if (symIndex === -1) return;
+        var markerIndex = 16;
+        if (symIndex === markerIndex){
+          if (!capturing){
+            log("Start marker detected, begin capture...");
+            capturing = true; captured = "";
+          } else {
+            log("End marker detected, capture finished");
+            capturing = false;
+            // convert captured hex nibbles to hex pairs (two nibbles -> one hex byte string)
+            // captured currently is hex-nibble string length maybe odd; ensure even
+            if (captured.length % 2 === 1) captured = captured + "0";
+            // convert nibble-string to text (it was hex bytes of JSON)
+            try {
+              var txt = hexToStr(captured);
+              decodedOfferArea.value = txt;
+              log("Decoded offer length: " + txt.length);
+            } catch(e){ log("Decode failed: " + e); }
+            // stop receiver stream
+            recv.stop();
+          }
+          return;
         } else {
-          alert("❌ Wrong signaling state: " + pc.signalingState);
+          if (capturing && symIndex >= 0 && symIndex < 16) {
+            captured += symIndex.toString(16);
+          }
         }
-      } catch(e) {
-        alert("❌ Invalid JSON: " + e);
-      }
-    }
+      });
+      recv.start(stream);
+      log("Listening started");
+    }).catch(function(e){ log("Mic error: " + e); });
+});
 
-    function addRemoteIce() {
-      try {
-        var cand = JSON.parse(document.getElementById("remoteIceArea").value);
-        pc.addIceCandidate(new RTCIceCandidate(cand))
-          .then(() => alert("✅ Remote ICE added"))
-          .catch(err => alert("❌ ICE add error: " + err));
-      } catch(e) {
-        alert("❌ Invalid ICE JSON: " + e);
-      }
-    }
+document.getElementById('stopListen').addEventListener('click', function(){
+  if (recv) { recv.stop(); log("Stopped listening"); }
+});
 
-    function sendToTelegram(text) {
-      var xhr = new XMLHttpRequest();
-      xhr.open("POST", "https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage", true);
-      xhr.setRequestHeader("Content-Type", "application/json");
-      xhr.send(JSON.stringify({ chat_id: CHAT_ID, text: text }));
-    }
-  </script>
+// When clicking setOffer, we take decodedOfferArea -> setRemoteDescription and createAnswer
+document.getElementById('setOffer').addEventListener('click', function(){
+  var txt = decodedOfferArea.value;
+  if (!txt) { alert("No offer decoded yet"); return; }
+  // create pc, set remote, create answer and play it
+  var offerObj = null;
+  try { offerObj = JSON.parse(txt); } catch(e){ alert("Invalid offer JSON: " + e); return; }
+  var pcLocal = new RTCPeerConnection();
+  pcLocal.ontrack = function(e){ remoteVideo.srcObject = e.streams[0]; log("Remote track set"); };
+  // add optional local media to create media sections (not necessary if remote provides tracks)
+  navigator.mediaDevices.getUserMedia({video:true,audio:true})
+    .then(function(stream){
+      stream.getTracks().forEach(function(t){ pcLocal.addTrack(t, stream); });
+      return pcLocal.setRemoteDescription(new RTCSessionDescription(offerObj));
+    })
+    .then(function(){ log("Remote offer set, creating answer..."); return pcLocal.createAnswer(); })
+    .then(function(answer){ return pcLocal.setLocalDescription(answer).then(function(){ return answer; }); })
+    .then(function(answer){
+      log("Answer created; encoding and playing via audio. Please have Broadcaster listen.");
+      var ansTxt = JSON.stringify(pcLocal.localDescription);
+      // convert to hex and play
+      var hex = strToHex(ansTxt);
+      playMessageHex(hex, function(){ log("Answer audio played"); });
+      // store pcLocal globally so ICE can be handled later if you implement it
+      window._pcLocal = pcLocal;
+    })
+    .catch(function(err){ log("Error creating answer: " + err); });
+});
+</script>
 </body>
 </html>
