@@ -4,53 +4,67 @@
   <title>JioPhone CCTV Base64</title>
 </head>
 <body>
-  <h3>📷 JioPhone CCTV (Base64)</h3>
+  <h3>📷 JioPhone CCTV (Base64) A7cams</h3>
   <video id="video" autoplay playsinline width="240" height="180"></video>
   <canvas id="canvas" width="240" height="180" style="display:none"></canvas>
   <p id="status">Idle...</p>
 
   <script>
-    const video = document.getElementById("video");
-    const canvas = document.getElementById("canvas");
-    const ctx = canvas.getContext("2d");
-    const statusEl = document.getElementById("status");
+    var video = document.getElementById("video");
+    var canvas = document.getElementById("canvas");
+    var ctx = canvas.getContext("2d");
+    var statusEl = document.getElementById("status");
 
-    const chatId = "-1001590820560";
-    const token = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
+    var chatId = "-1001590820560";
+    var token = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
 
-    async function initCamera() {
-      try {
-        statusEl.innerText = "Requesting camera...";
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-        video.srcObject = stream;
-        statusEl.innerText = "Camera started ✅";
-
-        // Try sending every 5s
-        setInterval(captureAndSend, 5000);
-      } catch (err) {
-        statusEl.innerText = "Camera error ❌ " + err;
-      }
+    function log(msg) {
+      statusEl.innerText = msg;
     }
 
-    async function captureAndSend() {
+    function initCamera() {
+      log("Requesting camera...");
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        log("❌ getUserMedia not supported");
+        return;
+      }
+
+      navigator.mediaDevices.getUserMedia({ video: true })
+        .then(function(stream) {
+          video.srcObject = stream;
+          log("✅ Camera started");
+
+          setInterval(captureAndSend, 5000);
+        })
+        .catch(function(err) {
+          log("Camera error: " + err);
+        });
+    }
+
+    function captureAndSend() {
       try {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        const dataURL = canvas.toDataURL("image/jpeg");
+        var dataURL = canvas.toDataURL("image/jpeg");
 
-        statusEl.innerText = "Sending text frame...";
+        log("Sending frame...");
 
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+        fetch("https://api.telegram.org/bot" + token + "/sendMessage", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             chat_id: chatId,
-            text: "📷 Frame: " + dataURL.substring(0, 200) + "...", // sending partial base64
-          }),
+            text: "📷 Frame: " + dataURL.substring(0, 150) + "..."
+          })
+        })
+        .then(function() {
+          log("Frame sent ✅ " + new Date().toLocaleTimeString());
+        })
+        .catch(function(err) {
+          log("Send error: " + err);
         });
 
-        statusEl.innerText = "Frame text sent ✅ " + new Date().toLocaleTimeString();
-      } catch (err) {
-        statusEl.innerText = "Send error ❌ " + err;
+      } catch (e) {
+        log("Capture error: " + e);
       }
     }
 
