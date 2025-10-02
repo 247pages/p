@@ -5,9 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <style>
     body { font-family:sans-serif; background:#111; color:#eee; text-align:center; }
-    video, canvas { width:90%; margin:10px; background:#000; }
+    video { width:90%; background:#000; margin:10px; }
     button { padding:10px; margin:10px; width:90%; font-size:14px; }
-    pre { text-align:left; font-size:12px; background:#222; padding:5px; white-space:pre-wrap; }
+    pre { text-align:left; background:#222; padding:5px; font-size:12px; white-space:pre-wrap; }
   </style>
 </head>
 <body>
@@ -19,75 +19,100 @@
   <pre id="log">Idle...</pre>
 
   <script>
-    const BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
-    const CHAT_ID = "-1001590820560";
+    var BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
+    var CHAT_ID = "-1001590820560";
 
-    let video = document.getElementById("video");
-    let canvas = document.getElementById("canvas");
-    let logEl = document.getElementById("log");
-    let intervalId = null;
+    var video = document.getElementById("video");
+    var canvas = document.getElementById("canvas");
+    var logEl = document.getElementById("log");
+    var intervalId = null;
 
     function log(msg) {
       logEl.innerText += "\n" + msg;
       logEl.scrollTop = logEl.scrollHeight;
     }
 
-    async function start() {
+    function start() {
       log("▶️ Starting camera...");
-      try {
-        let stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      // Use old getUserMedia for KaiOS
+      var gum = (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) ||
+                navigator.getUserMedia ||
+                navigator.webkitGetUserMedia ||
+                navigator.mozGetUserMedia;
+
+      if (!gum) {
+        log("❌ getUserMedia not supported on this device");
+        return;
+      }
+
+      gum.call(navigator, { video: true, audio: false }, function(stream) {
         video.srcObject = stream;
         log("✅ Camera started");
-
-        intervalId = setInterval(captureAndSend, 5000); // every 5s
-      } catch (err) {
-        log("❌ getUserMedia error: " + err.message);
-      }
+        intervalId = setInterval(captureAndSend, 5000);
+      }, function(err) {
+        log("❌ Camera error: " + err.message);
+      });
     }
 
     function stop() {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-        log("⏹️ Stopped sending snapshots");
-      }
+      if (intervalId) clearInterval(intervalId);
+      intervalId = null;
       if (video.srcObject) {
         video.srcObject.getTracks().forEach(t => t.stop());
         video.srcObject = null;
       }
+      log("⏹️ Stopped");
     }
 
     function captureAndSend() {
-      if (!video.srcObject) {
-        log("⚠️ No camera stream");
+      if (!video.videoWidth) {
+        log("⚠️ Waiting for video...");
         return;
       }
-      let ctx = canvas.getContext("2d");
-      canvas.width = video.videoWidth || 160;
-      canvas.height = video.videoHeight || 120;
+
+      var ctx = canvas.getContext("2d");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-      canvas.toBlob(blob => {
-        if (!blob) return;
-        log("📤 Sending snapshot...");
-        sendToTelegram(blob);
-      }, "image/jpeg", 0.5); // quality 0.5 for smaller size
+      var dataURL = canvas.toDataURL("image/jpeg", 0.5);
+
+      log("📤 Sending snapshot...");
+      sendToTelegram(dataURL);
     }
 
-    function sendToTelegram(blob) {
-      let formData = new FormData();
+    function sendToTelegram(base64Image) {
+      // Strip prefix "data:image/jpeg;base64,"
+      var b64 = base64Image.split(",")[1];
+      var blob = b64ToBlob(b64, "image/jpeg");
+
+      var formData = new FormData();
       formData.append("chat_id", CHAT_ID);
       formData.append("photo", blob, "snapshot.jpg");
 
-      let xhr = new XMLHttpRequest();
+      var xhr = new XMLHttpRequest();
       xhr.open("POST", "https://api.telegram.org/bot" + BOT_TOKEN + "/sendPhoto", true);
       xhr.onreadystatechange = function () {
         if (xhr.readyState === 4) {
-          if (xhr.status === 200) log("✅ Snapshot sent");
-          else log("❌ Telegram error: " + xhr.status);
+          if (xhr.status === 200) log("✅ Sent to Telegram");
+          else log("❌ Error: " + xhr.status);
         }
       };
       xhr.send(formData);
+    }
+
+    function b64ToBlob(b64Data, contentType) {
+      var byteChars = atob(b64Data);
+      var byteArrays = [];
+      for (var offset = 0; offset < byteChars.length; offset += 512) {
+        var slice = byteChars.slice(offset, offset + 512);
+        var byteNumbers = new Array(slice.length);
+        for (var i = 0; i < slice.length; i++) {
+          byteNumbers[i] = slice.charCodeAt(i);
+        }
+        byteArrays.push(new Uint8Array(byteNumbers));
+      }
+      return new Blob(byteArrays, {type: contentType});
     }
   </script>
 </body>
