@@ -1,341 +1,94 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
 <head>
-<meta charset="utf-8"/>
-<title>Jio Audio Pair — Broadcaster</title>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<style>
-  body{font-family:sans-serif;color:#eee;background:#111;padding:10px;text-align:center}
-  video{width:95%;background:#000;height:180px}
-  textarea{width:95%;height:80px;font-size:12px;margin-top:6px}
-  button{padding:10px;margin:6px;width:95%}
-  pre{white-space:pre-wrap;text-align:left;background:#222;padding:8px;border-radius:6px;height:120px;overflow:auto}
-</style>
+  <title>JioPhone CCTV Snapshots</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    body { font-family:sans-serif; background:#111; color:#eee; text-align:center; }
+    video, canvas { width:90%; margin:10px; background:#000; }
+    button { padding:10px; margin:10px; width:90%; font-size:14px; }
+    pre { text-align:left; font-size:12px; background:#222; padding:5px; white-space:pre-wrap; }
+  </style>
 </head>
 <body>
-  <h2>Jio Audio Pair — Broadcaster (Camera)</h2>
-  <video id="local" autoplay muted playsinline></video>
-  <div>
-    <button id="startCam">Start Camera</button>
-    <button id="createOffer">Create Offer & Play (send via audio)</button>
-  </div>
-  <div><small>Then place Admin device near Jio microphone and have it listen.</small></div>
-  <h4>Log</h4><pre id="log">Idle...</pre>
-  <h4>Decoded remote answer (if received)</h4><textarea id="decodedAnswer" placeholder="Answer will appear here"></textarea>
+  <h3>📸 JioPhone CCTV Snapshots</h3>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+  <button onclick="start()">Start Sending</button>
+  <button onclick="stop()">Stop</button>
+  <pre id="log">Idle...</pre>
 
-<script>
-/*
-Audio-based simple modem prototype.
-Encoding: hex nibbles 0..15 mapped to 16 frequencies.
-Start marker: frequency set 0xFF played for marker duration.
-Message flow: play start marker -> symbols -> end marker.
-Receiver detects symbol per symbolDuration window.
-*/
+  <script>
+    const BOT_TOKEN = "6675607272:AAFIafZckGOmNT8m9mE66_YgaBzkD3wo_xg";
+    const CHAT_ID = "-1001590820560";
 
-var logEl = document.getElementById('log');
-function log(s){ logEl.innerText += "\n" + s; }
+    let video = document.getElementById("video");
+    let canvas = document.getElementById("canvas");
+    let logEl = document.getElementById("log");
+    let intervalId = null;
 
-var localVideo = document.getElementById('local');
-var decodedArea = document.getElementById('decodedAnswer');
-
-var pc = null;
-var localStream = null;
-
-// --- Tone params ---
-var baseFreq = 1200; // lowest tone
-var freqStep = 200;  // step between tones (16 tones -> covers 1200..4200)
-var symbolDuration = 140; // ms per symbol (increase for reliability)
-var markerFreq = 5000; // special marker frequency (> others)
-var sampleInterval = symbolDuration; // for receiver window
-
-// create tone for nibble (0..15)
-function nibbleFreq(n) {
-  return baseFreq + (n * freqStep);
-}
-
-// UTF-8 string -> hex string
-function strToHex(s) {
-  var h = "";
-  for (var i=0;i<s.length;i++){
-    var code = s.charCodeAt(i);
-    // encode as utf-8 multi-byte
-    if (code < 0x80) {
-      h += ("0" + code.toString(16)).slice(-2);
-    } else if (code < 0x800) {
-      // two bytes
-      h += ("0" + (0xc0 | (code>>6)).toString(16)).slice(-2);
-      h += ("0" + (0x80 | (code & 0x3f)).toString(16)).slice(-2);
-    } else {
-      h += ("0" + (0xe0 | (code>>12)).toString(16)).slice(-2);
-      h += ("0" + (0x80 | ((code>>6)&0x3f)).toString(16)).slice(-2);
-      h += ("0" + (0x80 | (code & 0x3f)).toString(16)).slice(-2);
+    function log(msg) {
+      logEl.innerText += "\n" + msg;
+      logEl.scrollTop = logEl.scrollHeight;
     }
-  }
-  return h;
-}
 
-// hex string -> utf8 string
-function hexToStr(hex) {
-  var bytes = [];
-  for (var i=0;i<hex.length;i+=2) bytes.push(parseInt(hex.substr(i,2),16));
-  // decode utf-8
-  var out = "";
-  for (var i=0;i<bytes.length;i++) {
-    var b = bytes[i];
-    if ((b & 0x80) === 0) {
-      out += String.fromCharCode(b);
-    } else if ((b & 0xe0) === 0xc0) {
-      var b2 = bytes[++i];
-      out += String.fromCharCode(((b & 0x1f) << 6) | (b2 & 0x3f));
-    } else {
-      var b2 = bytes[++i];
-      var b3 = bytes[++i];
-      out += String.fromCharCode(((b & 0x0f)<<12) | ((b2 & 0x3f)<<6) | (b3 & 0x3f));
-    }
-  }
-  return out;
-}
+    async function start() {
+      log("▶️ Starting camera...");
+      try {
+        let stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = stream;
+        log("✅ Camera started");
 
-// convert hex to nibble array
-function hexToNibbles(hex) {
-  var arr = [];
-  for (var i=0;i<hex.length;i++){
-    var nib = parseInt(hex[i],16);
-    arr.push(nib);
-  }
-  return arr;
-}
-
-// play a tone sequence using WebAudio
-function playTonesForNibbles(nibbles, onDone) {
-  try {
-    var ctx = new (window.AudioContext || window.webkitAudioContext)();
-    var now = ctx.currentTime;
-    var gain = ctx.createGain();
-    gain.connect(ctx.destination);
-    gain.gain.value = 0.8;
-    for (var i=0;i<nibbles.length;i++){
-      (function(i){
-        var n = nibbles[i];
-        var osc = ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.value = nibbleFreq(n);
-        osc.connect(gain);
-        osc.start(now + (i * symbolDuration / 1000));
-        osc.stop(now + ((i+1) * symbolDuration / 1000));
-      })(i);
-    }
-    // call done after last tone
-    setTimeout(function(){
-      ctx.close();
-      if (onDone) onDone();
-    }, nibbles.length * symbolDuration + 50);
-  } catch(e) {
-    log("Audio play failed: " + e);
-    if (onDone) onDone();
-  }
-}
-
-// Play full message (with start marker then nibbles then end marker)
-function playMessageHex(hexStr, onDone) {
-  // convert hex to nibble array (each hex char is a nibble 0..15)
-  var nibbles = hexToNibbles(hexStr);
-  // prepend a few marker nibbles (we use marker as special tone out of range: play marker tone via separate oscillator)
-  // Instead of marker nibble we will play a burst at markerFreq for 250ms, then nibbles, then marker
-  try {
-    var ctx = new (window.AudioContext || window.webkitAudioContext)();
-    var now = ctx.currentTime;
-    var gain = ctx.createGain();
-    gain.connect(ctx.destination);
-    gain.gain.value = 0.8;
-    // start marker
-    var startOsc = ctx.createOscillator();
-    startOsc.type = 'sine';
-    startOsc.frequency.value = markerFreq;
-    startOsc.connect(gain);
-    startOsc.start(now);
-    startOsc.stop(now + 0.25);
-    // schedule nibble tones after start marker
-    for (var i=0;i<nibbles.length;i++){
-      (function(i){
-        var n = nibbles[i];
-        var osc = ctx.createOscillator();
-        osc.type = 'sine';
-        osc.frequency.value = nibbleFreq(n);
-        osc.connect(gain);
-        var start = now + 0.25 + (i * symbolDuration / 1000);
-        var end = start + (symbolDuration / 1000);
-        osc.start(start);
-        osc.stop(end);
-      })(i);
-    }
-    // end marker after nibble sequence
-    var totalDur = 0.25 + (nibbles.length * symbolDuration / 1000);
-    var endOsc = ctx.createOscillator();
-    endOsc.type = 'sine';
-    endOsc.frequency.value = markerFreq;
-    endOsc.connect(gain);
-    endOsc.start(now + totalDur);
-    endOsc.stop(now + totalDur + 0.25);
-    setTimeout(function(){ ctx.close(); if (onDone) onDone(); }, (totalDur + 0.3)*1000);
-  } catch(e) {
-    log("Audio play error: " + e);
-    if (onDone) onDone();
-  }
-}
-
-// --- Receiver decode via Goertzel-ish approach ---
-function createReceiver(onSymbol) {
-  var ctx = new (window.AudioContext || window.webkitAudioContext)();
-  var analyser = ctx.createAnalyser();
-  analyser.fftSize = 2048;
-  var bufferLen = analyser.fftSize;
-  var dataArray = new Uint8Array(bufferLen);
-
-  var freqs = [];
-  for (var i=0;i<16;i++) freqs.push(nibbleFreq(i));
-  // include marker as well
-  freqs.push(markerFreq);
-
-  var bins = freqs.map(function(f){
-    return Math.round(f * analyser.fftSize / ctx.sampleRate);
-  });
-
-  var source = null;
-  var listening = false;
-
-  function startListening(stream) {
-    source = ctx.createMediaStreamSource(stream);
-    source.connect(analyser);
-    listening = true;
-    var symbolMs = symbolDuration;
-    var interval = setInterval(function(){
-      if (!listening) { clearInterval(interval); return; }
-      analyser.getByteFrequencyData(dataArray);
-      // find strongest frequency among our bins
-      var bestIndex = -1;
-      var bestVal = -1;
-      for (var i=0;i<bins.length;i++){
-        var idx = bins[i];
-        var val = dataArray[idx] || 0;
-        if (val > bestVal) { bestVal = val; bestIndex = i; }
+        intervalId = setInterval(captureAndSend, 5000); // every 5s
+      } catch (err) {
+        log("❌ getUserMedia error: " + err.message);
       }
-      // if marker freq is strong => marker
-      if (bestVal > 120) { // threshold (tune)
-        onSymbol(bestIndex, bestVal);
-      } else {
-        // nothing detected
-        onSymbol(-1, bestVal);
+    }
+
+    function stop() {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+        log("⏹️ Stopped sending snapshots");
       }
-    }, symbolMs);
-  }
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(t => t.stop());
+        video.srcObject = null;
+      }
+    }
 
-  function stopListening(){
-    listening = false;
-    try { if (source) source.disconnect(); } catch(e){}
-    try{ ctx.close(); } catch(e){}
-  }
+    function captureAndSend() {
+      if (!video.srcObject) {
+        log("⚠️ No camera stream");
+        return;
+      }
+      let ctx = canvas.getContext("2d");
+      canvas.width = video.videoWidth || 160;
+      canvas.height = video.videoHeight || 120;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-  return {start:startListening, stop:stopListening};
-}
+      canvas.toBlob(blob => {
+        if (!blob) return;
+        log("📤 Sending snapshot...");
+        sendToTelegram(blob);
+      }, "image/jpeg", 0.5); // quality 0.5 for smaller size
+    }
 
-// --- WebRTC flow ---
-document.getElementById('startCam').addEventListener('click', function(){
-  // capture preview only (no offer yet)
-  navigator.mediaDevices.getUserMedia({video:true,audio:false})
-    .then(function(s){
-      localStream = s;
-      localVideo.srcObject = s;
-      log("Camera preview started");
-    }).catch(function(e){ log("Camera error: " + e); });
-});
+    function sendToTelegram(blob) {
+      let formData = new FormData();
+      formData.append("chat_id", CHAT_ID);
+      formData.append("photo", blob, "snapshot.jpg");
 
-document.getElementById('createOffer').addEventListener('click', function(){
-  if (!localStream) {
-    log("Start camera first");
-    return;
-  }
-  // Create PeerConnection, add tracks
-  pc = new RTCPeerConnection();
-  // Attach local tracks to pc
-  for (var i=0;i<localStream.getTracks().length;i++){
-    pc.addTrack(localStream.getTracks()[i], localStream);
-  }
-  log("PeerConnection created, creating offer...");
-  pc.createOffer().then(function(offer){
-    return pc.setLocalDescription(offer);
-  }).then(function(){
-    var offerSDP = pc.localDescription.sdp || JSON.stringify(pc.localDescription);
-    var offerJSON = { type: pc.localDescription.type, sdp: pc.localDescription.sdp };
-    var s = JSON.stringify(offerJSON);
-    log("Offer created length: " + s.length + " chars. Encoding to audio...");
-    // encode to hex and play audio
-    var hex = strToHex(s);
-    playMessageHex(hex, function(){ log("Offer audio finished playing. Now start receiver to wait for answer audio..."); });
-    // also start listening for answer audio
-    startListeningForAnswer();
-  }).catch(function(err){ log("Offer error: " + err); });
-});
-
-var listeningReceiver = null;
-var answerCapture = "";
-var expectingAnswer = false;
-function startListeningForAnswer() {
-  expectingAnswer = true;
-  navigator.mediaDevices.getUserMedia({audio:true, video:false})
-    .then(function(stream){
-      log("Listening for answer via mic (be ready)...");
-      var recv = createReceiver(function(symIndex, strength){
-        // symIndex -1 means nothing; if marker index is last index => marker detected
-        if (!expectingAnswer) return;
-        if (symIndex === -1) return;
-        var markerIndex = 16; // last index in bins array
-        if (symIndex === markerIndex) {
-          // marker toggles start/end
-          // simple strategy: flip capture mode when marker detected
-          if (!answerCapture) {
-            log("Start marker detected, begin capturing symbols...");
-            answerCapture = "";
-          } else {
-            log("End marker detected, finishing capture...");
-            expectingAnswer = false;
-            recv.stop();
-            // decoded -> hex string -> text
-            try {
-              var hex = answerCapture;
-              var txt = hexToStr(hex);
-              log("Decoded answer length: " + txt.length);
-              decodedArea.value = txt;
-              applyRemoteAnswer(txt);
-            } catch(e) { log("Decode error: " + e); }
-          }
-          return;
-        } else {
-          // regular nibble 0..15
-          if (symIndex >=0 && symIndex < 16) {
-            var nib = symIndex;
-            // append nibble as hex char
-            answerCapture += nib.toString(16);
-          }
+      let xhr = new XMLHttpRequest();
+      xhr.open("POST", "https://api.telegram.org/bot" + BOT_TOKEN + "/sendPhoto", true);
+      xhr.onreadystatechange = function () {
+        if (xhr.readyState === 4) {
+          if (xhr.status === 200) log("✅ Snapshot sent");
+          else log("❌ Telegram error: " + xhr.status);
         }
-      });
-      recv.start(stream);
-      listeningReceiver = recv;
-    })
-    .catch(function(err){ log("Mic listening failed: " + err); });
-}
-
-// apply remote answer JSON text (string) to PeerConnection
-function applyRemoteAnswer(txt) {
-  try {
-    var obj = JSON.parse(txt);
-    pc.setRemoteDescription(new RTCSessionDescription(obj))
-      .then(function(){ log("Remote answer applied. Connection should proceed (if ICE available)."); })
-      .catch(function(err){ log("setRemoteDescription error: " + err); });
-  } catch(e) {
-    log("Invalid JSON from audio answer: " + e);
-  }
-}
-</script>
+      };
+      xhr.send(formData);
+    }
+  </script>
 </body>
 </html>
